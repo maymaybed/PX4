@@ -44,6 +44,7 @@
 #pragma once
 
 #include "mavlink_ftp.h"
+#include "mavlink_attitude_bootstrap.h"
 #include "mavlink_log_handler.h"
 #include "mavlink_mission.h"
 #include "mavlink_parameters.h"
@@ -292,6 +293,7 @@ private:
 	void updateParams() override;
 
 	Mavlink &_mavlink;
+	MavlinkAttitudeBootstrap _attitude_bootstrap;
 
 	MavlinkFTP			_mavlink_ftp;
 	MavlinkLogHandler		_mavlink_log_handler;

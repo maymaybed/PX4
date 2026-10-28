@@ -420,3 +420,182 @@ TEST_F(EkfInitializationTest, initializeWithRoll90)
 	_sensor_simulator.runSeconds(1.f);
 	learningCorrectAccelBias();
 }
+
+TEST_F(EkfInitializationTest, bootstrapRequiredWaitsWithoutAccelerometerFallback)
+{
+	_ekf->requireAttitudeBootstrap(true);
+	_sensor_simulator.runSeconds(2.f);
+	EXPECT_FALSE(_ekf->attitude_valid());
+	EXPECT_FALSE(_ekf->control_status_flags().tilt_align);
+	EXPECT_FALSE(_ekf->attitudeBootstrapApplied());
+}
+
+TEST_F(EkfInitializationTest, bootstrapInitializesFullAttitudeUnderAcceleration)
+{
+	_ekf->requireAttitudeBootstrap(true);
+	_ekf_wrapper.setMagFuseTypeNone();
+	_sensor_simulator._imu.setAccelData(Vector3f{5.f, -3.f, -CONSTANTS_ONE_G});
+	_sensor_simulator.runSeconds(0.7f);
+	ASSERT_FALSE(_ekf->attitude_valid());
+	const Quatf seed{Eulerf{0.2f, -0.1f, 0.7f}};
+	const Vector3f variance{sq(0.01f), sq(0.015f), sq(0.03f)};
+	const uint64_t sample_time = _sensor_simulator.getTime() - 10000;
+	ASSERT_EQ(_ekf->setAttitudeBootstrap(sample_time, seed, variance), Ekf::AttitudeBootstrapResult::Waiting);
+	_sensor_simulator.runSeconds(0.3f);
+	ASSERT_TRUE(_ekf->attitudeBootstrapApplied());
+	EXPECT_TRUE(_ekf->control_status_flags().tilt_align);
+	EXPECT_TRUE(_ekf->control_status_flags().yaw_align);
+	EXPECT_TRUE(matrix::isEqual(_ekf->attitudeBootstrapQuaternion(), seed, 1e-4f));
+	EXPECT_GE(_ekf->attitudeBootstrapTime(), sample_time);
+	EXPECT_GT(_ekf->getRotVarNed()(0), 0.f);
+	EXPECT_GT(_ekf->getRotVarNed()(1), 0.f);
+	EXPECT_GT(_ekf->getRotVarNed()(2), 0.f);
+
+	// Once initialized, a different source attitude cannot reset the local estimate.
+	const Quatf unrelated_seed{Eulerf{-0.3f, 0.4f, -2.f}};
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(_sensor_simulator.getTime() - 10000, unrelated_seed, variance),
+		  Ekf::AttitudeBootstrapResult::AlreadyInitialized);
+	EXPECT_TRUE(matrix::isEqual(_ekf->attitudeBootstrapQuaternion(), seed, 1e-4f));
+}
+
+TEST_F(EkfInitializationTest, bootstrapAlignsDelayedHorizonAndContinuesLocalGyroPropagation)
+{
+	_ekf->requireAttitudeBootstrap(true);
+	_ekf_wrapper.setMagFuseTypeNone();
+	const float yaw_rate = 0.7f;
+	_sensor_simulator._imu.setData(Vector3f{4.f, 1.f, -CONSTANTS_ONE_G}, Vector3f{0.f, 0.f, yaw_rate});
+	_sensor_simulator.runSeconds(0.7f);
+	const Quatf seed{Eulerf{0.f, 0.f, 0.8f}};
+	const uint64_t sample_time = _sensor_simulator.getTime() - 13000; // intentionally inside an IMU interval
+	ASSERT_EQ(_ekf->setAttitudeBootstrap(sample_time, seed, Vector3f{0.0001f, 0.0001f, 0.0001f}),
+		  Ekf::AttitudeBootstrapResult::Waiting);
+	_sensor_simulator.runSeconds(0.3f);
+	ASSERT_TRUE(_ekf->attitudeBootstrapApplied());
+	const float dt = (_ekf->attitudeBootstrapTime() - sample_time) * 1e-6f;
+	const Quatf expected = seed * Quatf{AxisAnglef{Vector3f{0.f, 0.f, yaw_rate * dt}}};
+	EXPECT_TRUE(matrix::isEqual(_ekf->attitudeBootstrapQuaternion(), expected, 2e-4f));
+
+	const float yaw_before = Eulerf{_ekf->getQuaternion()}.psi();
+	const float realtime_dt = (_sensor_simulator.getTime() - sample_time) * 1e-6f;
+	EXPECT_NEAR(matrix::wrap_pi(yaw_before - Eulerf{seed}.psi()), yaw_rate * realtime_dt, 0.02f);
+	_sensor_simulator.runSeconds(0.3f);
+	const float yaw_after = Eulerf{_ekf->getQuaternion()}.psi();
+	EXPECT_NEAR(matrix::wrap_pi(yaw_after - yaw_before), yaw_rate * 0.3f, 0.03f);
+}
+
+TEST_F(EkfInitializationTest, bootstrapRejectsInvalidLateFutureAndDuplicateData)
+{
+	const Quatf seed{};
+	const Vector3f variance{0.0001f, 0.0001f, 0.0001f};
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(1000, seed, variance), Ekf::AttitudeBootstrapResult::Disabled);
+	_ekf->requireAttitudeBootstrap(true);
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(1000, seed, variance), Ekf::AttitudeBootstrapResult::NoImu);
+	_sensor_simulator.runSeconds(0.7f);
+	const uint64_t sample_time = _sensor_simulator.getTime() - 10000;
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(sample_time, Quatf{NAN, 0.f, 0.f, 0.f}, variance),
+		  Ekf::AttitudeBootstrapResult::InvalidQuaternion);
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(sample_time, Quatf{2.f, 0.f, 0.f, 0.f}, variance),
+		  Ekf::AttitudeBootstrapResult::InvalidQuaternion);
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(sample_time, seed, Vector3f{0.f, 0.001f, 0.001f}),
+		  Ekf::AttitudeBootstrapResult::InvalidVariance);
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(sample_time, seed, Vector3f{NAN, 0.001f, 0.001f}),
+		  Ekf::AttitudeBootstrapResult::InvalidVariance);
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(sample_time, seed, Vector3f{-0.001f, 0.001f, 0.001f}),
+		  Ekf::AttitudeBootstrapResult::InvalidVariance);
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(sample_time, seed, Vector3f{INFINITY, 0.001f, 0.001f}),
+		  Ekf::AttitudeBootstrapResult::InvalidVariance);
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(1, seed, variance), Ekf::AttitudeBootstrapResult::Stale);
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(_sensor_simulator.getTime() + 100000, seed, variance),
+		  Ekf::AttitudeBootstrapResult::Future);
+	ASSERT_EQ(_ekf->setAttitudeBootstrap(sample_time, seed, variance), Ekf::AttitudeBootstrapResult::Waiting);
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(sample_time, seed, variance), Ekf::AttitudeBootstrapResult::Busy);
+	_sensor_simulator.runSeconds(0.3f);
+	EXPECT_EQ(_ekf->setAttitudeBootstrap(sample_time, seed, variance), Ekf::AttitudeBootstrapResult::AlreadyInitialized);
+}
+
+TEST_F(EkfInitializationTest, bootstrapRejectsMissingImuCoverage)
+{
+	_ekf->requireAttitudeBootstrap(true);
+	_sensor_simulator.runSeconds(0.7f);
+	_sensor_simulator._imu.stop();
+	_sensor_simulator.runSeconds(0.5f);
+	_sensor_simulator._imu.start();
+	_sensor_simulator.runMicroseconds(1000);
+
+	// This otherwise fresh sample falls in the IMU outage, rather than in a
+	// buffered integration interval. It must not be extrapolated across the gap.
+	const uint64_t sample_time = _sensor_simulator.getTime() - 100000;
+	ASSERT_EQ(_ekf->setAttitudeBootstrap(sample_time, Quatf{}, Vector3f{0.0001f, 0.0001f, 0.0001f}),
+		  Ekf::AttitudeBootstrapResult::Waiting);
+	_sensor_simulator.runSeconds(0.4f);
+	EXPECT_FALSE(_ekf->attitudeBootstrapApplied());
+	EXPECT_FALSE(_ekf->attitude_valid());
+	EXPECT_EQ(_ekf->attitudeBootstrapResult(), Ekf::AttitudeBootstrapResult::Stale);
+}
+
+TEST_F(EkfInitializationTest, bootstrapYawSurvivesFirstLocalMagnetometerSample)
+{
+	_ekf->requireAttitudeBootstrap(true);
+	_ekf->set_vehicle_at_rest(false);
+	_sensor_simulator._mag.stop();
+	const Quatf seed{Eulerf{0.1f, -0.05f, 0.6f}};
+	_sensor_simulator.simulateOrientation(seed);
+	_sensor_simulator.runSeconds(0.7f);
+	ASSERT_EQ(_ekf->setAttitudeBootstrap(_sensor_simulator.getTime() - 10000, seed,
+					   Vector3f{0.0001f, 0.0001f, 0.0001f}), Ekf::AttitudeBootstrapResult::Waiting);
+	_sensor_simulator.runSeconds(0.3f);
+	ASSERT_TRUE(_ekf->control_status_flags().yaw_align);
+	const uint8_t quat_resets = _ekf->get_quat_reset_count();
+	_sensor_simulator._mag.start();
+	_sensor_simulator.runSeconds(0.5f);
+	EXPECT_TRUE(_ekf->control_status_flags().yaw_align);
+	EXPECT_TRUE(_ekf->control_status_flags().mag);
+	EXPECT_EQ(_ekf->get_quat_reset_count(), quat_resets);
+	EXPECT_NEAR(matrix::wrap_pi(Eulerf{_ekf->getQuaternion()}.psi() - Eulerf{seed}.psi()), 0.f, 0.01f);
+}
+
+TEST_F(EkfInitializationTest, bootstrapInitializesUnknownVelocityFromFirstQualifiedOwnGnssOnly)
+{
+	_ekf->requireAttitudeBootstrap(true);
+	_ekf->set_vehicle_at_rest(false);
+	_ekf->getParamHandle()->ekf2_imu_ctrl |= static_cast<int32_t>(ImuCtrl::GravityVector);
+	_ekf->set_min_required_gps_health_time(500000);
+	_ekf_wrapper.enableGpsFusion();
+	const Quatf seed{Eulerf{0.f, 0.f, 0.5f}};
+	_sensor_simulator.simulateOrientation(seed);
+	_sensor_simulator._gps.setVelocity(Vector3f{3.f, 0.f, 0.f});
+	_sensor_simulator._gps.setPositionRateNED(Vector3f{3.f, 0.f, 0.f});
+	_sensor_simulator._gps.setNumberOfSatellites(3); // Keep the ordinary GNSS quality checks failing initially.
+	_sensor_simulator.startGps();
+	_sensor_simulator.runSeconds(0.7f);
+	ASSERT_EQ(_ekf->setAttitudeBootstrap(_sensor_simulator.getTime() - 10000, seed,
+					   Vector3f{0.0001f, 0.0001f, 0.0004f}), Ekf::AttitudeBootstrapResult::Waiting);
+	_sensor_simulator.runSeconds(1.f);
+	ASSERT_TRUE(_ekf->attitudeBootstrapApplied());
+	EXPECT_FALSE(_ekf->control_status_flags().gnss_vel);
+	EXPECT_FALSE(_ekf->information_event_flags().reset_vel_to_gps);
+
+	_sensor_simulator._gps.setNumberOfSatellites(16);
+	_sensor_simulator.runSeconds(4.f);
+	ASSERT_TRUE(_ekf->control_status_flags().gnss_vel);
+	EXPECT_TRUE(_ekf->information_event_flags().reset_vel_to_gps);
+	EXPECT_NEAR(_ekf->getVelocity()(0), 3.f, 0.15f);
+	EXPECT_NEAR(_ekf->getVelocity()(1), 0.f, 0.15f);
+	EXPECT_LT(_ekf->getGyroBias().norm(), 0.01f);
+	EXPECT_NEAR(matrix::wrap_pi(Eulerf{_ekf->getQuaternion()}.psi() - Eulerf{seed}.psi()), 0.f, 0.1f);
+
+	// After normal velocity initialization, a later outage/reacquisition uses
+	// the normal fusion policy, rather than repeating the bootstrap reset.
+	_sensor_simulator.stopGps();
+	_sensor_simulator.runSeconds(9.f);
+	ASSERT_FALSE(_ekf->control_status_flags().gnss_vel);
+	const uint8_t velocity_resets = _ekf->get_velNE_reset_count();
+	_ekf->clear_information_events();
+	_sensor_simulator.startGps();
+	_sensor_simulator.runSeconds(3.f);
+	ASSERT_TRUE(_ekf->control_status_flags().gnss_vel);
+	EXPECT_EQ(_ekf->get_velNE_reset_count(), velocity_resets);
+	EXPECT_FALSE(_ekf->information_event_flags().reset_vel_to_gps);
+	EXPECT_NEAR(_ekf->getVelocity()(0), 3.f, 0.2f);
+	EXPECT_LT(_ekf->getGyroBias().norm(), 0.01f);
+}

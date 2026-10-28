@@ -56,6 +56,7 @@ bool Ekf::init(uint64_t timestamp)
 void Ekf::reset()
 {
 	ECL_INFO("reset");
+	_attitude_bootstrap_pending = false;
 
 	_state.quat_nominal.setIdentity();
 	_state.vel.setZero();
@@ -139,6 +140,12 @@ bool Ekf::update()
 	if (_imu_updated) {
 		_imu_updated = false;
 
+		if (!_filter_initialised && _attitude_bootstrap_required) {
+			// Preserve own IMU propagation between the seed's delayed horizon and
+			// the current output. No corrections can run before initialization.
+			_output_predictor.bufferOutputStates();
+		}
+
 		// get the oldest IMU data from the buffer
 		// TODO: explicitly pop at desired time horizon
 		const imuSample imu_sample_delayed = _imu_buffer.get_oldest();
@@ -168,8 +175,10 @@ bool Ekf::update()
 			_dt_ekf_avg = 0.99f * _dt_ekf_avg + 0.01f * input;
 		}
 
+		const bool bootstrap_initialising = !_filter_initialised && _attitude_bootstrap_required;
+
 		if (!_filter_initialised) {
-			_filter_initialised = initialiseFilter();
+			_filter_initialised = initialiseFilter(imu_sample_delayed);
 
 			if (!_filter_initialised) {
 				return false;
@@ -179,14 +188,16 @@ bool Ekf::update()
 		updateIMUBiasInhibit(imu_sample_delayed);
 
 		// perform state and covariance prediction for the main filter
-		predictCovariance(imu_sample_delayed);
-		predictState(imu_sample_delayed);
+		if (!bootstrap_initialising) {
+			predictCovariance(imu_sample_delayed);
+			predictState(imu_sample_delayed);
+		}
 
 		// control fusion of observation data
 		controlFusionModes(imu_sample_delayed);
 
 		_output_predictor.correctOutputStates(imu_sample_delayed.time_us, _state.quat_nominal, _state.vel, _gpos,
-						      _state.gyro_bias, _state.accel_bias);
+						      _state.gyro_bias, _state.accel_bias, bootstrap_initialising);
 
 		return true;
 	}
@@ -194,14 +205,105 @@ bool Ekf::update()
 	return false;
 }
 
-bool Ekf::initialiseFilter()
+Ekf::AttitudeBootstrapResult Ekf::setAttitudeBootstrap(uint64_t time_us, const Quatf &q,
+		const Vector3f &variance)
 {
-	if (!initialiseTilt()) {
+	if (!_attitude_bootstrap_required) {
+		return AttitudeBootstrapResult::Disabled;
+	}
+
+	if (_filter_initialised || _attitude_bootstrap_used) {
+		return AttitudeBootstrapResult::AlreadyInitialized;
+	}
+
+	if (_attitude_bootstrap_pending) {
+		return AttitudeBootstrapResult::Busy;
+	}
+
+	if (!q.isAllFinite() || fabsf(q.norm() - 1.f) > 0.01f) {
+		return AttitudeBootstrapResult::InvalidQuaternion;
+	}
+
+	if (!variance.isAllFinite() || variance.min() <= 0.f) {
+		return AttitudeBootstrapResult::InvalidVariance;
+	}
+
+	if (_time_latest_us == 0 || _time_delayed_us == 0) {
+		return AttitudeBootstrapResult::NoImu;
+	}
+
+	if (time_us == 0 || time_us < _time_delayed_us) {
+		return AttitudeBootstrapResult::Stale;
+	}
+
+	if (time_us > _time_latest_us) {
+		return AttitudeBootstrapResult::Future;
+	}
+
+	_attitude_bootstrap_time = time_us;
+	_attitude_bootstrap_q = q.normalized();
+	_attitude_bootstrap_variance = variance;
+	_attitude_bootstrap_pending = true;
+	_attitude_bootstrap_result = AttitudeBootstrapResult::Waiting;
+	return AttitudeBootstrapResult::Waiting;
+}
+
+bool Ekf::initialiseFilter(const imuSample &imu_delayed)
+{
+	if (_attitude_bootstrap_required) {
+		if (!_attitude_bootstrap_pending || imu_delayed.time_us < _attitude_bootstrap_time) {
+			return false;
+		}
+
+		const float remaining_s = (imu_delayed.time_us - _attitude_bootstrap_time) * 1e-6f;
+
+		if (remaining_s > math::min(imu_delayed.delta_ang_dt, imu_delayed.delta_vel_dt) + 0.0005f) {
+			// Missing IMU coverage is not safely recoverable by extrapolating the seed.
+			_attitude_bootstrap_pending = false;
+			_attitude_bootstrap_result = AttitudeBootstrapResult::Stale;
+			return false;
+		}
+
+		_state.quat_nominal = _attitude_bootstrap_q;
+		_R_to_earth = Dcmf(_state.quat_nominal);
+
+	} else if (!initialiseTilt()) {
 		return false;
 	}
 
 	// initialise the state covariance matrix now we have starting values for all the states
 	initialiseCovariance();
+
+	if (_attitude_bootstrap_required) {
+		// The covariance is a rotation-vector covariance in NED, not quaternion component variance.
+		resetQuatCov(_attitude_bootstrap_variance);
+
+		// The sample lies in this delayed IMU interval. Integrate only the portion
+		// after its timestamp, rather than applying a current attitude to old IMU data.
+		const float remaining_s = (imu_delayed.time_us - _attitude_bootstrap_time) * 1e-6f;
+
+		if (remaining_s > 0.f) {
+			imuSample partial = imu_delayed;
+			partial.delta_ang *= math::constrain(remaining_s / partial.delta_ang_dt, 0.f, 1.f);
+			partial.delta_vel *= math::constrain(remaining_s / partial.delta_vel_dt, 0.f, 1.f);
+			partial.delta_ang_dt = math::min(remaining_s, partial.delta_ang_dt);
+			partial.delta_vel_dt = math::min(remaining_s, partial.delta_vel_dt);
+			predictCovariance(partial);
+			predictState(partial);
+		}
+
+		_control_status.flags.tilt_align = true;
+		_control_status.flags.yaw_align = true;
+		_time_last_heading_fuse = imu_delayed.time_us;
+		_attitude_bootstrap_applied_time = imu_delayed.time_us;
+		_attitude_bootstrap_applied_q = _state.quat_nominal;
+		_attitude_bootstrap_pending = false;
+		_attitude_bootstrap_used = true;
+		_attitude_bootstrap_result = AttitudeBootstrapResult::Accepted;
+#if defined(CONFIG_EKF2_GNSS)
+		_attitude_bootstrap_gnss_vel_pending = true;
+#endif // CONFIG_EKF2_GNSS
+	}
 
 	// reset the output predictor state history to match the EKF initial values
 	_output_predictor.alignOutputFilter(_state.quat_nominal, _state.vel, _gpos);

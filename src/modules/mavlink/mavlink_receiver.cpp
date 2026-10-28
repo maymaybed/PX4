@@ -115,6 +115,7 @@ static constexpr vehicle_odometry_s vehicle_odometry_empty {
 MavlinkReceiver::MavlinkReceiver(Mavlink &parent) :
 	ModuleParams(nullptr),
 	_mavlink(parent),
+	_attitude_bootstrap(parent),
 	_mavlink_ftp(parent),
 	_mavlink_log_handler(parent),
 	_mission_manager(parent),
@@ -2192,6 +2193,11 @@ MavlinkReceiver::handle_message_tunnel(mavlink_message_t *msg)
 	mavlink_tunnel_t mavlink_tunnel;
 	mavlink_msg_tunnel_decode(msg, &mavlink_tunnel);
 
+	if (mavlink_tunnel.payload_type == attitude_bootstrap::PAYLOAD_TYPE) {
+		_attitude_bootstrap.handle(*msg, mavlink_tunnel);
+		return;
+	}
+
 	if (mavlink_tunnel.payload_length > sizeof(mavlink_tunnel.payload)) {
 		// The payload buffer is a fixed 128 bytes while payload_length is a uint8_t, so a
 		// sender can advertise more data than the message can carry. Drop such a message
@@ -3918,6 +3924,7 @@ MavlinkReceiver::run()
 		const hrt_abstime t = hrt_absolute_time();
 
 		CheckHeartbeats(t);
+		_attitude_bootstrap.update(t);
 
 		if (t - last_send_update > timeout * 1000) {
 			_mission_manager.check_active_mission();

@@ -136,6 +136,8 @@ void LoggedTopics::add_default_topics()
 	add_topic("vehicle_air_data", 200);
 	add_topic("vehicle_angular_velocity", 20);
 	add_topic("vehicle_attitude", 50);
+	add_topic("attitude_bootstrap");
+	add_topic("attitude_bootstrap_status");
 	add_topic("vehicle_attitude_setpoint", 50);
 	add_topic("vehicle_command");
 	add_topic("vehicle_command_ack");

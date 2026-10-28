@@ -264,9 +264,16 @@ void OutputPredictor::calculateOutputStates(const uint64_t time_us, const Vector
 	_delta_angle_sum_dt += delta_angle_dt;
 }
 
+void OutputPredictor::bufferOutputStates()
+{
+	_output_buffer.push(_output_new);
+	_output_vert_buffer.push(_output_vert_new);
+	_output_vert_new.dt = 0.f;
+}
+
 void OutputPredictor::correctOutputStates(const uint64_t time_delayed_us,
 		const Quatf &quat_state, const Vector3f &vel_state, const LatLonAlt &gpos_state, const matrix::Vector3f &gyro_bias,
-		const matrix::Vector3f &accel_bias)
+		const matrix::Vector3f &accel_bias, bool buffer_already_updated)
 {
 	// calculate an average filter update time
 	if (_time_last_correct_states_us != 0) {
@@ -281,8 +288,9 @@ void OutputPredictor::correctOutputStates(const uint64_t time_delayed_us,
 	_accel_bias = accel_bias;
 
 	// store the INS states in a ring buffer with the same length and time coordinates as the IMU data buffer
-	_output_buffer.push(_output_new);
-	_output_vert_buffer.push(_output_vert_new);
+	if (!buffer_already_updated) {
+		bufferOutputStates();
+	}
 
 	// get the oldest INS state data from the ring buffer
 	// this data will be at the EKF fusion time horizon

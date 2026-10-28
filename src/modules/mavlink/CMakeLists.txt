@@ -105,6 +105,7 @@ px4_add_module(
 		#-DDEBUG_BUILD
 	SRCS
 		mavlink.c
+		mavlink_attitude_bootstrap.cpp
 		mavlink_command_sender.cpp
 		mavlink_events.cpp
 		mavlink_ftp.cpp
@@ -162,6 +163,8 @@ px4_add_unit_gtest(SRC MavlinkStatustextHandlerTest.cpp
 	LINKLIBS
 		modules__mavlink
 	)
+
+px4_add_unit_gtest(SRC MavlinkAttitudeBootstrapTest.cpp)
 
 if(CONFIG_NET AND "${PX4_PLATFORM}" MATCHES "nuttx")
 	target_link_libraries(modules__mavlink PRIVATE nuttx_apps) # netlib_get_ipv4netmask

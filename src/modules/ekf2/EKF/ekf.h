@@ -95,6 +95,24 @@ public:
 	// should be called every time new data is pushed into the filter
 	bool update();
 
+	// A bootstrap is an initial condition, never an observation for ongoing fusion.
+	enum class AttitudeBootstrapResult : uint8_t {
+		Accepted = 0, Disabled = 1, InvalidQuaternion = 5, InvalidVariance = 6,
+		Stale = 8, Future = 9, AlreadyInitialized = 10, Busy = 11, Waiting = 12, NoImu = 15
+	};
+	void requireAttitudeBootstrap(bool required) { if (!_filter_initialised) { _attitude_bootstrap_required = required; } }
+
+	AttitudeBootstrapResult setAttitudeBootstrap(uint64_t time_us, const Quatf &q, const Vector3f &variance);
+	void cancelAttitudeBootstrap() { _attitude_bootstrap_pending = false; }
+
+	bool attitudeBootstrapApplied() const { return _attitude_bootstrap_used; }
+
+	AttitudeBootstrapResult attitudeBootstrapResult() const { return _attitude_bootstrap_result; }
+
+	uint64_t attitudeBootstrapTime() const { return _attitude_bootstrap_applied_time; }
+
+	const Quatf &attitudeBootstrapQuaternion() const { return _attitude_bootstrap_applied_q; }
+
 	const StateSample &state() const { return _state; }
 
 #if defined(CONFIG_EKF2_BAROMETER)
@@ -526,6 +544,18 @@ private:
 	LatLonAlt _gpos{0.0, 0.0, 0.f};
 
 	bool _filter_initialised{false};	///< true when the EKF sttes and covariances been initialised
+	bool _attitude_bootstrap_required{false};
+	bool _attitude_bootstrap_pending{false};
+	bool _attitude_bootstrap_used{false}; ///< deliberately preserved across reset()
+#if defined(CONFIG_EKF2_GNSS)
+	bool _attitude_bootstrap_gnss_vel_pending{false}; ///< zero initial velocity is unknown on a moving platform
+#endif // CONFIG_EKF2_GNSS
+	uint64_t _attitude_bootstrap_time{0};
+	uint64_t _attitude_bootstrap_applied_time{0};
+	Quatf _attitude_bootstrap_q{};
+	Quatf _attitude_bootstrap_applied_q{};
+	Vector3f _attitude_bootstrap_variance{};
+	AttitudeBootstrapResult _attitude_bootstrap_result{AttitudeBootstrapResult::Waiting};
 
 	uint64_t _time_last_horizontal_aiding{0}; ///< amount of time we have been doing inertial only deadreckoning (uSec)
 	uint64_t _time_last_v_pos_aiding{0};
@@ -683,7 +713,7 @@ private:
 	uint16_t _clip_counter[3];		///< counter per axis that increments when clipping ad decrements when not
 
 	// initialise filter states of both the delayed ekf and the real time complementary filter
-	bool initialiseFilter(void);
+	bool initialiseFilter(const imuSample &imu_delayed);
 
 	// initialise ekf covariance matrix
 	void initialiseCovariance();

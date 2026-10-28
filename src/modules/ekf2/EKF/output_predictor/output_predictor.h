@@ -67,9 +67,12 @@ public:
 	void calculateOutputStates(const uint64_t time_us, const matrix::Vector3f &delta_angle, const float delta_angle_dt,
 				   const matrix::Vector3f &delta_velocity, const float delta_velocity_dt);
 
+	// Store current own-IMU states while waiting for delayed bootstrap initialization.
+	void bufferOutputStates();
+
 	void correctOutputStates(const uint64_t time_delayed_us,
 				 const matrix::Quatf &quat_state, const matrix::Vector3f &vel_state, const LatLonAlt &gpos_state,
-				 const matrix::Vector3f &gyro_bias, const matrix::Vector3f &accel_bias);
+				 const matrix::Vector3f &gyro_bias, const matrix::Vector3f &accel_bias, bool buffer_already_updated = false);
 
 	void resetQuaternion(const matrix::Quatf &quat_change);
 

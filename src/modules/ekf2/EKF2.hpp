@@ -64,6 +64,8 @@
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionCallback.hpp>
 #include <uORB/SubscriptionMultiArray.hpp>
+#include <uORB/topics/attitude_bootstrap.h>
+#include <uORB/topics/attitude_bootstrap_status.h>
 #include <uORB/topics/ekf2_timestamps.h>
 #include <uORB/topics/estimator_bias.h>
 #include <uORB/topics/estimator_bias3d.h>
@@ -168,6 +170,8 @@ private:
 	static constexpr uint8_t MAX_NUM_MAGS = 4;
 
 	void Run() override;
+	void UpdateAttitudeBootstrap(const imuSample &imu);
+	void PublishAttitudeBootstrapResult(attitude_bootstrap_status_s &status, uint8_t result);
 
 	void AdvertiseTopics();
 	void VerifyParams();
@@ -405,6 +409,12 @@ private:
 	uORB::Subscription _launch_detection_status_sub{ORB_ID(launch_detection_status)};
 
 	uORB::Subscription _vehicle_command_sub{ORB_ID(vehicle_command)};
+	uORB::Subscription _attitude_bootstrap_sub{ORB_ID(attitude_bootstrap)};
+	uORB::Subscription _bootstrap_vehicle_status_sub{ORB_ID(vehicle_status)};
+	uORB::Publication<attitude_bootstrap_status_s> _attitude_bootstrap_status_pub{ORB_ID(attitude_bootstrap_status)};
+	attitude_bootstrap_status_s _pending_bootstrap_status{};
+	int32_t _attitude_bootstrap_mode{-1}; ///< latched at startup; fail closed until reboot
+	bool _attitude_bootstrap_pending{false};
 	uORB::Publication<vehicle_command_ack_s> _vehicle_command_ack_pub{ORB_ID(vehicle_command_ack)};
 
 	enum SensEn : uint16_t {
@@ -523,6 +533,13 @@ private:
 	FusionControl &_fc;
 
 	DEFINE_PARAMETERS(
+		(ParamInt<px4::params::EKF2_AB_MODE>) _param_ekf2_ab_mode,
+		(ParamInt<px4::params::EKF2_AB_SYS>) _param_ekf2_ab_sys,
+		(ParamInt<px4::params::EKF2_AB_COMP>) _param_ekf2_ab_comp,
+		(ParamFloat<px4::params::EKF2_AB_AGE>) _param_ekf2_ab_age,
+		(ParamFloat<px4::params::EKF2_AB_TILT>) _param_ekf2_ab_tilt,
+		(ParamFloat<px4::params::EKF2_AB_YAW>) _param_ekf2_ab_yaw,
+		(ParamFloat<px4::params::EKF2_AB_TUNC>) _param_ekf2_ab_tunc,
 		(ParamBool<px4::params::EKF2_LOG_VERBOSE>) _param_ekf2_log_verbose,
 		(ParamExtInt<px4::params::EKF2_PREDICT_US>) _param_ekf2_predict_us,
 		(ParamExtFloat<px4::params::EKF2_DELAY_MAX>) _param_ekf2_delay_max,

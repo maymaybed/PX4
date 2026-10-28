@@ -65,7 +65,9 @@ void Ekf::controlMagFusion(const imuSample &imu_sample)
 
 	if (_mag_buffer && _mag_buffer->pop_first_older_than(imu_sample.time_us, &mag_sample)) {
 
-		if (mag_sample.reset || (_mag_counter == 0)) {
+		const bool first_mag_sample = (_mag_counter == 0);
+
+		if (mag_sample.reset || first_mag_sample) {
 			// sensor or calibration has changed, reset low pass filter
 			_control_status.flags.mag_fault = false;
 
@@ -77,9 +79,10 @@ void Ekf::controlMagFusion(const imuSample &imu_sample)
 			_mag_lpf.reset(mag_sample.mag);
 			_mag_counter = 1;
 
-			if (!_control_status.flags.in_air) {
+			if (!_control_status.flags.in_air && !(first_mag_sample && _attitude_bootstrap_used)) {
 				// Assume that a reset on the ground is caused by a change in mag calibration
-				// Clear alignment to force a clean reset
+				// Clear alignment to force a clean reset. The first local sample after
+				// a validated bootstrap initializes the mag states without discarding yaw.
 				_control_status.flags.yaw_align = false;
 			}
 

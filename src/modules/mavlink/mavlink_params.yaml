@@ -2,6 +2,27 @@ module_name: mavlink
 parameters:
 - group: MAVLink
   definitions:
+    MAV_AB_EN:
+      description:
+        short: Serve one-shot attitude bootstrap requests
+        long: |-
+          Enable on the already initialized source aircraft only. Replies on the
+          requesting MAVLink link with the selected estimator's complete NED/FRD
+          attitude and uncertainty. Aircraft must have the same body orientation.
+      type: boolean
+      default: 0
+    MAV_AB_LINK:
+      description:
+        short: MAVLink instance for attitude bootstrap requests
+        long: |-
+          MAVLink instance used by a follower with EKF2_AB_MODE enabled to request
+          one initial attitude from EKF2_AB_SYS/EKF2_AB_COMP. Requests stop after
+          an EKF confirms application. This is a MAVLink instance number, as
+          displayed by mavlink status, rather than a physical serial port number.
+      type: int32
+      default: 0
+      min: 0
+      max: 6
     MAV_SYS_ID:
       description:
         short: MAVLink system ID

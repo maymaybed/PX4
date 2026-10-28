@@ -275,6 +275,7 @@ px4_add_module(
 		params_gyro_bias.yaml
 		params_accel_bias.yaml
 		params_multi.yaml
+		params_attitude_bootstrap.yaml
 		params_volatile.yaml
 		params_selector.yaml
 		${EKF_MODULE_PARAMS}
