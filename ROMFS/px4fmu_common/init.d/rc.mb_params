@@ -1,0 +1,18 @@
+#!/bin/sh
+# 按设备角色标记使用中的参数，供地面站常规参数下载使用。
+# param touch仅设置使用标记，不改参数值、不写串口配置、不启动任务。
+# 使用标记在本次启动内保留，切换角色后须重启并重新加载参数列表。
+
+if param compare -s MB_ROLE 1
+then
+	# 车载参考端：公共配置与参考发送频率。
+	param touch MB_MAV_INST MB_TS_RATE MB_REF_RATE
+fi
+
+# NuttX NSH不支持elif，两个互斥角色分别使用独立的if判断。
+if param compare -s MB_ROLE 2
+then
+	# 机载接收端：公共配置与可信参考来源、接收超时。
+	param touch MB_MAV_INST MB_TS_RATE MB_SRC_SYS MB_SRC_COMP MB_REF_TMO
+fi
+# 两次角色查询会标记MB_ROLE；关闭或非法角色不展开其他配置。

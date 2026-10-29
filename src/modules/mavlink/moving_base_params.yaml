@@ -1,0 +1,109 @@
+# 移动平台起飞参数独立登记，复用现有MAVLink实例和串口参数。
+# 参数名称统一使用MB_前缀；角色和配置变更均在重启后生效。
+module_name: Moving Base
+
+parameters:
+    - group: 移动平台公共
+      definitions:
+        MB_ROLE:
+            description:
+                short: 移动平台设备角色
+                long: |
+                    0为关闭，1为车载参考端，2为机载接收端。
+                    保存后重启，并在地面站重新加载参数，以显示对应角色的配置项。
+                    此参数不替代解锁检查，也不表示导航已完成初始化。
+            type: enum
+            values:
+                0: 关闭
+                1: 车载参考端
+                2: 机载接收端
+            default: 0
+            reboot_required: true
+
+        MB_MAV_INST:
+            description:
+                short: 专用MAVLink配置实例
+                long: |
+                    选择MAV_0、MAV_1或MAV_2配置实例，不是mavlink status中的运行编号。
+                    物理端口由对应MAV_x_CONFIG选择，消息模式使用Custom。
+                    波特率、流控和带宽继续使用现有SER_TELx_BAUD、MAV_x_FLOW_CTRL和MAV_x_RATE。
+                    车机链路只使用一个专用串口实例，不选择USB或以太网链路。
+            type: enum
+            values:
+                0: MAV_0配置实例
+                1: MAV_1配置实例
+                2: MAV_2配置实例
+            default: 2
+            reboot_required: true
+
+        MB_TS_RATE:
+            description:
+                short: 时间同步请求频率
+                long: |
+                    专用车机链路主动发送TIMESYNC请求的目标频率。
+                    复用既有同步协议；应答处理与请求频率设置相互独立。
+                    实际频率受链路调度和带宽限制，不能用该值代替同步质量或收敛判定。
+            type: int32
+            min: 1
+            max: 20
+            unit: Hz
+            default: 10
+            reboot_required: true
+
+    - group: 移动平台车载
+      definitions:
+        MB_REF_RATE:
+            description:
+                short: 车载参考发送频率
+                long: |
+                    车载端采集并发送参考快照的目标频率，不改变IMU采样率或EKF计算频率。
+                    每个数据量保留自身的样本时间，实际发送频率受MAVLink调度和带宽限制。
+                    仅在MB_ROLE为1时使用。
+            type: int32
+            min: 1
+            max: 100
+            unit: Hz
+            default: 50
+            reboot_required: true
+
+    - group: 移动平台机载
+      definitions:
+        MB_SRC_SYS:
+            description:
+                short: 可信车载端系统编号
+                long: |
+                    接受参考数据的车载端MAVLink系统编号，须与车载端MAV_SYS_ID一致。
+                    应与机载端自身系统编号不同，0不作为任意来源通配值。
+                    仅在MB_ROLE为2时使用。
+            type: int32
+            min: 1
+            max: 255
+            default: 1
+            reboot_required: true
+
+        MB_SRC_COMP:
+            description:
+                short: 可信车载端组件编号
+                long: |
+                    接受参考数据的车载端MAVLink组件编号，须与车载端MAV_COMP_ID一致。
+                    0不作为任意来源通配值；与系统编号及专用实例一起限定参考来源。
+                    仅在MB_ROLE为2时使用。
+            type: int32
+            min: 1
+            max: 255
+            default: 1
+            reboot_required: true
+
+        MB_REF_TMO:
+            description:
+                short: 车载参考接收超时
+                long: |
+                    机载端连续未收到合格车载参考的超时阈值。
+                    该值约束接收连续性，不代替样本龄期、样本间时差或同步映射时效检查。
+                    仅在MB_ROLE为2时使用。
+            type: int32
+            min: 20
+            max: 5000
+            unit: ms
+            default: 200
+            reboot_required: true

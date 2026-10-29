@@ -36,6 +36,20 @@ serial_config:
         then
             set MAV_ARGS "${MAV_ARGS} -F p:MAV_${i}_HL_FREQ"
         fi
+        # 仅给选中的车载串口传入配置编号，不使用运行实例编号。
+        if param compare MB_ROLE 1
+        then
+            if param compare MB_MAV_INST ${i}
+            then
+                if [ $SERIAL_DEV != ethernet ]
+                then
+                    if param compare MAV_${i}_MODE 1
+                    then
+                        set MAV_ARGS "${MAV_ARGS} -I ${i}"
+                    fi
+                fi
+            fi
+        fi
         mavlink start ${MAV_ARGS} -x
       port_config_param:
         name: MAV_${i}_CONFIG

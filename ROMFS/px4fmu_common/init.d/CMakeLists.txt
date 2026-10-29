@@ -121,6 +121,12 @@ if(CONFIG_MODULES_LOGGER)
 	)
 endif()
 
+if(CONFIG_MODULES_MAVLINK)
+	px4_add_romfs_files(
+		rc.mb_params
+	)
+endif()
+
 if(CONFIG_MODULES_TEMPERATURE_COMPENSATION)
 	px4_add_romfs_files(
 		rc.thermal_cal

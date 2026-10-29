@@ -326,6 +326,8 @@ public:
 	void			handle_message(const mavlink_message_t *msg);
 
 	int			get_instance_id() const { return _instance_id; }
+	// 由串口启动脚本传入的配置编号，与运行实例编号无关。
+	int get_moving_base_config_instance() const { return _moving_base_config_instance; }
 
 	/**
 	 * Enable / disable hardware flow control.
@@ -519,6 +521,7 @@ private:
 	MavlinkSignControl	_sign_control{};
 
 	int			_instance_id{-1};
+	int _moving_base_config_instance{-1};
 	int			_task_id{-1};
 
 	px4::atomic_bool	_task_should_exit{false};
@@ -699,6 +702,7 @@ private:
 	 * @return 0 on success, <0 on error
 	 */
 	int configure_stream(const char *stream_name, const float rate = -1.0f);
+	void configure_moving_base_streams();
 
 	/**
 	 * Configure default streams according to _mode for either all streams or only a single

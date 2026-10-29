@@ -586,6 +586,14 @@ else
 	unset BOARD_RC_MAVLINK
 
 	#
+	# 串口服务启动前，按移动平台角色加载对应参数。
+	# 文件仅在包含MAVLink模块的固件中登记。
+	if [ -f ${R}etc/init.d/rc.mb_params ]
+	then
+		. ${R}etc/init.d/rc.mb_params
+	fi
+
+	#
 	# Start UART/Serial device drivers.
 	# Note: rc.serial is auto-generated from Tools/serial/generate_config.py
 	#

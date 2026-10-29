@@ -97,6 +97,9 @@
 #include "streams/MAG_CAL_REPORT.hpp"
 #include "streams/MANUAL_CONTROL.hpp"
 #include "streams/MOUNT_ORIENTATION.hpp"
+#if defined(MAVLINK_MSG_ID_MOVING_BASE_REFERENCE)
+#include "streams/MOVING_BASE_REFERENCE.hpp"
+#endif
 #include "streams/NAV_CONTROLLER_OUTPUT.hpp"
 #include "streams/OBSTACLE_DISTANCE.hpp"
 #include "streams/OPEN_DRONE_ID_BASIC_ID.hpp"
@@ -439,6 +442,9 @@ static const StreamListItem streams_list[] = {
 #if defined(MOUNT_ORIENTATION_HPP)
 	create_stream_list_item<MavlinkStreamMountOrientation>(),
 #endif // MOUNT_ORIENTATION_HPP
+#if defined(MOVING_BASE_REFERENCE_HPP)
+	create_stream_list_item<MavlinkStreamMovingBaseReference>(),
+#endif // MOVING_BASE_REFERENCE_HPP
 #if defined(HIGH_LATENCY2_HPP)
 	create_stream_list_item<MavlinkStreamHighLatency2>(),
 #endif // HIGH_LATENCY2_HPP

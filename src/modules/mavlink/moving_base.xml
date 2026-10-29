@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<mavlink>
+  <include>mavlink/message_definitions/v1.0/common.xml</include>
+  <version>3</version>
+  <dialect>0</dialect>
+  <messages>
+    <!-- 项目私有编号，合并其他方言时须核对冲突；所有时间属于发送端开机时钟。 -->
+    <message id="60050" name="MOVING_BASE_REFERENCE">
+      <description>Vehicle-mounted navigation reference, not aircraft odometry or arming permission. Protocol version 1. Invalid quantities must not be consumed. No position or lever-arm compensation. Receiver must detect source reboot and estimator changes.</description>
+      <field type="uint64_t" name="time_boot_us" units="us">Reference publication time, not UART transmission time.</field>
+      <field type="uint64_t" name="attitude_sample_us" units="us">Attitude sample time in sender boot clock; zero means unavailable.</field>
+      <field type="uint64_t" name="velocity_sample_us" units="us">Velocity sample time in sender boot clock; zero means unavailable.</field>
+      <field type="uint64_t" name="angular_velocity_sample_us" units="us">Angular velocity sample time in sender boot clock; zero means unavailable.</field>
+      <field type="float[4]" name="q">Hamilton quaternion w,x,y,z, body FRD to earth NED.</field>
+      <field type="float[3]" name="velocity" units="m/s">North, east, down velocity at source navigation reference point.</field>
+      <field type="float[3]" name="angular_velocity" units="rad/s">Bias-corrected body FRD angular velocity.</field>
+      <field type="uint8_t" name="protocol_version">Must be 1.</field>
+      <field type="uint8_t" name="validity_flags">Bitmask: 1 tilt, 2 heading, 4 horizontal velocity, 8 vertical velocity, 16 angular velocity. Zero means no valid reference.</field>
+      <field type="uint8_t" name="quat_reset_counter">Quaternion reset counter, modulo 256.</field>
+      <field type="uint8_t" name="vxy_reset_counter">Horizontal velocity reset counter, modulo 256.</field>
+      <field type="uint8_t" name="vz_reset_counter">Vertical velocity reset counter, modulo 256.</field>
+      <field type="uint8_t" name="estimator_instance">Selected estimator instance; 255 if unknown.</field>
+    </message>
+  </messages>
+</mavlink>
