@@ -1604,19 +1604,50 @@ Mavlink::update_radio_status(const radio_status_s &radio_status)
 	pthread_mutex_unlock(&_radio_status_mutex);
 }
 
+void Mavlink::update_moving_base_transmitter()
+{
+	_moving_base_transmitter_enabled = false;
+#if defined(MAVLINK_MSG_ID_MOVING_BASE_REFERENCE)
+	// 普通实例先退出，不查询车载参数，也不创建采集对象。
+	if (_moving_base_config_instance < 0 || _moving_base_config_instance > 2
+	    || get_protocol() != Protocol::SERIAL || get_mode() != MAVLINK_MODE_CUSTOM
+	    || strncmp(_device_name, "/dev/ttyS", 9) != 0) {
+		return;
+	}
+
+	if (_moving_base_role_param == PARAM_INVALID) {
+		_moving_base_role_param = param_find("MB_ROLE");
+	}
+
+	int32_t role = 0;
+
+	if (param_get(_moving_base_role_param, &role) != 0 || role != 1) {
+		return;
+	}
+
+	if (_moving_base_instance_param == PARAM_INVALID) {
+		_moving_base_instance_param = param_find("MB_MAV_INST");
+	}
+
+	int32_t selected = -1;
+	_moving_base_transmitter_enabled = param_get(_moving_base_instance_param, &selected) == 0
+					   && selected == _moving_base_config_instance;
+
+	if (_moving_base_transmitter_enabled) {
+		if (_moving_base_imu_mode_param == PARAM_INVALID) {
+			_moving_base_imu_mode_param = param_find("SENS_IMU_MODE");
+		}
+
+		_moving_base_imu_mode = -1;
+		param_get(_moving_base_imu_mode_param, &_moving_base_imu_mode);
+	}
+#endif
+}
+
 void Mavlink::configure_moving_base_streams()
 {
 #if defined(MAVLINK_MSG_ID_MOVING_BASE_REFERENCE)
-	int32_t role = 0;
-	int32_t selected = -1;
-
-	// 所有新增参数读取和流设置均在车载角色与专用串口边界内。
-	if (get_moving_base_config_instance() < 0
-	    || param_get(param_find("MB_ROLE"), &role) != 0 || role != 1
-	    || param_get(param_find("MB_MAV_INST"), &selected) != 0
-	    || selected != get_moving_base_config_instance()
-	    || get_protocol() != Protocol::SERIAL || get_mode() != MAVLINK_MODE_CUSTOM
-	    || strncmp(_device_name, "/dev/ttyS", 9) != 0) {
+	if (!moving_base_transmitter_enabled()) {
 		return;
 	}
 
@@ -2595,6 +2626,7 @@ Mavlink::task_main(int argc, char *argv[])
 #if defined(MAVLINK_MSG_ID_MOVING_BASE_REFERENCE)
 	// 角色关闭时启动脚本不传配置标记，不进入新增流配置路径。
 	if (_moving_base_config_instance >= 0) {
+		update_moving_base_transmitter();
 		configure_moving_base_streams();
 	}
 #endif
@@ -2689,6 +2721,11 @@ Mavlink::task_main(int argc, char *argv[])
 
 			// update parameters from storage
 			mavlink_update_parameters();
+#if defined(MAVLINK_MSG_ID_MOVING_BASE_REFERENCE)
+			if (_moving_base_config_instance >= 0) {
+				update_moving_base_transmitter();
+			}
+#endif
 		}
 
 		configure_sik_radio();

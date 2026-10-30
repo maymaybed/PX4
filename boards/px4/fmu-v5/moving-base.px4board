@@ -1,0 +1,2 @@
+# 继承 FMUv5 默认配置，仅为 CUAV V5 Nano 等 FMUv5 板启用车载参考协议。
+CONFIG_MAVLINK_DIALECT="moving_base"

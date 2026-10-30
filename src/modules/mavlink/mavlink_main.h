@@ -328,6 +328,9 @@ public:
 	int			get_instance_id() const { return _instance_id; }
 	// 由串口启动脚本传入的配置编号，与运行实例编号无关。
 	int get_moving_base_config_instance() const { return _moving_base_config_instance; }
+	// 推流热路径仅读缓存；启动和既有参数更新路径负责刷新。
+	bool moving_base_transmitter_enabled() const { return _moving_base_transmitter_enabled; }
+	int32_t moving_base_imu_mode() const { return _moving_base_imu_mode; }
 
 	/**
 	 * Enable / disable hardware flow control.
@@ -522,6 +525,12 @@ private:
 
 	int			_instance_id{-1};
 	int _moving_base_config_instance{-1};
+	bool _moving_base_transmitter_enabled{false};
+	void update_moving_base_transmitter();
+	param_t _moving_base_role_param{PARAM_INVALID};
+	param_t _moving_base_instance_param{PARAM_INVALID};
+	param_t _moving_base_imu_mode_param{PARAM_INVALID};
+	int32_t _moving_base_imu_mode{-1};
 	int			_task_id{-1};
 
 	px4::atomic_bool	_task_should_exit{false};

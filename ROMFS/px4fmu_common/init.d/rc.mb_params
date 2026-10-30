@@ -1,12 +1,48 @@
 #!/bin/sh
 # 按设备角色标记使用中的参数，供地面站常规参数下载使用。
-# param touch仅设置使用标记，不改参数值、不写串口配置、不启动任务。
+# param touch仅设置使用标记；以下检查也不改参数值、不写串口配置、不启动任务。
 # 使用标记在本次启动内保留，切换角色后须重启并重新加载参数列表。
 
 if param compare -s MB_ROLE 1
 then
 	# 车载参考端：公共配置与参考发送频率。
 	param touch MB_MAV_INST MB_TS_RATE MB_REF_RATE
+	if param compare -s MB_MAV_INST 0
+	then
+		if param compare MAV_0_CONFIG 0
+		then
+			echo "WARN [moving_base] MAV_0_CONFIG disabled"
+		else
+			if ! param compare MAV_0_MODE 1
+			then
+				echo "WARN [moving_base] set MAV_0_MODE=1 (Custom)"
+			fi
+		fi
+	fi
+	if param compare -s MB_MAV_INST 1
+	then
+		if param compare MAV_1_CONFIG 0
+		then
+			echo "WARN [moving_base] MAV_1_CONFIG disabled"
+		else
+			if ! param compare MAV_1_MODE 1
+			then
+				echo "WARN [moving_base] set MAV_1_MODE=1 (Custom)"
+			fi
+		fi
+	fi
+	if param compare -s MB_MAV_INST 2
+	then
+		if param compare MAV_2_CONFIG 0
+		then
+			echo "WARN [moving_base] MAV_2_CONFIG disabled"
+		else
+			if ! param compare MAV_2_MODE 1
+			then
+				echo "WARN [moving_base] set MAV_2_MODE=1 (Custom)"
+			fi
+		fi
+	fi
 fi
 
 # NuttX NSH不支持elif，两个互斥角色分别使用独立的if判断。

@@ -6,6 +6,8 @@
 #ifndef MOVING_BASE_REFERENCE_HPP
 #define MOVING_BASE_REFERENCE_HPP
 
+#include "MovingBaseHeadingQuality.hpp"
+
 #include <px4_platform_common/atomic.h>
 #include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
@@ -24,7 +26,7 @@ public:
 	static MavlinkStream *new_instance(Mavlink *mavlink)
 	{
 		// 先检查角色与链路，关闭时连采集订阅对象都不创建。
-		return link_enabled(mavlink) ? new MavlinkStreamMovingBaseReference(mavlink) : nullptr;
+		return mavlink->moving_base_transmitter_enabled() ? new MavlinkStreamMovingBaseReference(mavlink) : nullptr;
 	}
 	static constexpr const char *get_name_static() { return "MOVING_BASE_REFERENCE"; }
 	static constexpr uint16_t get_id_static() { return MAVLINK_MSG_ID_MOVING_BASE_REFERENCE; }
@@ -32,7 +34,13 @@ public:
 	uint16_t get_id() override { return get_id_static(); }
 	unsigned get_size() override
 	{
-		return link_enabled() ? MAVLINK_MSG_ID_MOVING_BASE_REFERENCE_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES : 0;
+		if (!_mavlink->moving_base_transmitter_enabled()) {
+			release_owner();
+			_epoch = 0;
+			return 0;
+		}
+
+		return MAVLINK_MSG_ID_MOVING_BASE_REFERENCE_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES;
 	}
 
 	~MavlinkStreamMovingBaseReference() override { release_owner(); }
@@ -69,24 +77,6 @@ private:
 		}
 	}
 
-	bool link_enabled() const
-	{
-		return link_enabled(_mavlink);
-	}
-
-	static bool link_enabled(Mavlink *mavlink)
-	{
-		int32_t role = 0;
-		int32_t configured_instance = -1;
-		return param_get(param_find("MB_ROLE"), &role) == 0 && role == 1
-		       && param_get(param_find("MB_MAV_INST"), &configured_instance) == 0
-		       && configured_instance >= 0 && configured_instance <= 2
-		       && mavlink->get_moving_base_config_instance() == configured_instance
-		       && mavlink->get_protocol() == Protocol::SERIAL
-		       && mavlink->get_mode() == Mavlink::MAVLINK_MODE_CUSTOM
-		       && strncmp(mavlink->_device_name, "/dev/ttyS", 9) == 0;
-	}
-
 	static bool fresh(uint64_t now, uint64_t stamp, uint64_t maximum_age)
 	{
 		return stamp != 0 && stamp <= now && now - stamp <= maximum_age;
@@ -112,7 +102,7 @@ private:
 
 	bool send() override
 	{
-		if (!link_enabled()) {
+		if (!_mavlink->moving_base_transmitter_enabled()) {
 			release_owner();
 			_epoch = 0;
 			return false;
@@ -133,8 +123,8 @@ private:
 		const uint64_t now = hrt_absolute_time();
 		constexpr uint64_t data_age = 100000;
 		constexpr uint64_t quality_age = 2000000;
-		int32_t imu_mode = -1;
-		bool mode_known = param_get(param_find("SENS_IMU_MODE"), &imu_mode) == 0;
+		const int32_t imu_mode = _mavlink->moving_base_imu_mode();
+		bool mode_known = imu_mode >= 0;
 		bool multi = false;
 #if defined(CONFIG_EKF2_MULTI_INSTANCE)
 		multi = imu_mode == 0;
@@ -190,6 +180,7 @@ private:
 
 		moving_base_reference_s ref{};
 		ref.timestamp = hrt_absolute_time();
+		const uint64_t validation_now = ref.timestamp;
 		ref.timestamp_attitude_sample = attitude.timestamp_sample;
 		ref.timestamp_velocity_sample = position.timestamp_sample;
 		ref.timestamp_angular_velocity_sample = angular_velocity.timestamp_sample;
@@ -205,25 +196,28 @@ private:
 
 		// 保守退化：各融合量和所选质量样本越过切换边界后才恢复对应有效位。
 		// 不回用旧实例，不锁死选择器；角速度独立检查，允许部分有效或全无效帧继续发送。
-		const bool coherent = selection_ok && (!multi || selector.healthy[instance]) && _epoch != 0
+		// 按采集后的发布时间检查，避免线程被抢占期间样本已超时仍沿用旧 now。
+		const bool coherent = selection_ok
+				      && (!multi || (selector.healthy[instance] && fresh(validation_now, selector.timestamp, quality_age)))
+				      && _epoch != 0
 				      && flags.timestamp_sample > _epoch
 				      && flags.timestamp_sample <= flags.timestamp
-				      && fresh(now, flags.timestamp, quality_age)
-				      && fresh(now, flags.timestamp_sample, quality_age);
-		const bool attitude_ok = coherent && fresh(now, attitude.timestamp, data_age)
+				      && fresh(validation_now, flags.timestamp, quality_age)
+				      && fresh(validation_now, flags.timestamp_sample, quality_age);
+		const bool attitude_ok = coherent && fresh(validation_now, attitude.timestamp, data_age)
 					 && attitude.timestamp_sample > _epoch
 					 && attitude.timestamp_sample <= attitude.timestamp
-					 && fresh(now, attitude.timestamp_sample, data_age) && valid_quaternion(ref.q);
-		const bool position_ok = coherent && fresh(now, position.timestamp, data_age)
+					 && fresh(validation_now, attitude.timestamp_sample, data_age) && valid_quaternion(ref.q);
+		const bool position_ok = coherent && fresh(validation_now, position.timestamp, data_age)
 					 && position.timestamp_sample > _epoch
 					 && position.timestamp_sample <= position.timestamp
-					 && fresh(now, position.timestamp_sample, data_age);
+					 && fresh(validation_now, position.timestamp_sample, data_age);
 		const bool tilt_ok = attitude_ok && flags.cs_tilt_align
 				     && !flags.fs_bad_acc_vertical && !flags.fs_bad_acc_clipping;
 
 		if (tilt_ok) { ref.validity_flags |= moving_base_reference_s::VALID_TILT; }
 
-		if (tilt_ok && position_ok && flags.cs_yaw_align && position.heading_good_for_control && !flags.fs_bad_hdg) {
+		if (tilt_ok && position_ok && moving_base_heading_ready(flags, position.heading_good_for_control)) {
 			ref.validity_flags |= moving_base_reference_s::VALID_HEADING;
 		}
 
@@ -240,9 +234,9 @@ private:
 			ref.validity_flags |= moving_base_reference_s::VALID_VERTICAL_VELOCITY;
 		}
 
-		if (fresh(now, angular_velocity.timestamp, data_age)
+		if (fresh(validation_now, angular_velocity.timestamp, data_age)
 		    && angular_velocity.timestamp_sample <= angular_velocity.timestamp
-		    && fresh(now, angular_velocity.timestamp_sample, data_age) && finite_vector(ref.angular_velocity)) {
+		    && fresh(validation_now, angular_velocity.timestamp_sample, data_age) && finite_vector(ref.angular_velocity)) {
 			ref.validity_flags |= moving_base_reference_s::VALID_ANGULAR_VELOCITY;
 		}
 
